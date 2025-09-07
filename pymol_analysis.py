@@ -4,7 +4,7 @@ PyMOL script to analyze two protein structures:
 1. Load two complex structures from different directories with the same filename
 2. Align structures and calculate RMSD
 3. Calculate SASA (Solvent Accessible Surface Area)
-4. Find interacting residues within 4.0Å distance
+4. Find interacting residues within 4.0Å distance, then calculate interface residues RMSD
 
 Usage: pymol -c pymol_analysis.py -- <pdb_filename> <dir1> <dir2>
 Example: pymol -c pymol_analysis.py -- protein.pdb /path/to/dir1 /path/to/dir2
@@ -35,6 +35,10 @@ class AnalysisResults:
         self.interface2_residues = []
         self.interface1_count = 0
         self.interface2_count = 0
+        self.interface_rmsd = 0.0
+        self.interface_backbone_rmsd = 0.0
+        self.interface_aligned_atoms = 0
+        self.interface_backbone_aligned_atoms = 0
 
 def load_structures(filename, dir1, dir2, results):
     """Load two PDB structures from different directories"""
@@ -159,6 +163,49 @@ def analyze_interface_residues(results):
     
     results.interface1_residues = sorted(set(stored.interface1_residues))
     results.interface2_residues = sorted(set(stored.interface2_residues))
+
+def calculate_interface_rmsd(results):
+    """Calculate RMSD for interface residues only"""
+    
+    print(f"Calculating interface RMSD...")
+    
+    # Create selections for interface residues (within 5Å)
+    cmd.select("interface1", "struct1 within 5.0 of struct2")
+    cmd.select("interface2", "struct2 within 5.0 of struct1")
+    
+    # Check if interface residues exist
+    if cmd.count_atoms("interface1") == 0 or cmd.count_atoms("interface2") == 0:
+        print("Warning: No interface residues found for RMSD calculation")
+        results.interface_rmsd = 0.0
+        results.interface_backbone_rmsd = 0.0
+        results.interface_aligned_atoms = 0
+        results.interface_backbone_aligned_atoms = 0
+        return
+    
+    # Calculate interface RMSD (all atoms)
+    try:
+        interface_alignment = cmd.align("interface2", "interface1")
+        results.interface_rmsd = interface_alignment[0]
+        results.interface_aligned_atoms = interface_alignment[1]
+    except:
+        print("Warning: Could not calculate interface RMSD for all atoms")
+        results.interface_rmsd = 0.0
+        results.interface_aligned_atoms = 0
+    
+    # Calculate interface backbone RMSD
+    try:
+        interface_backbone_alignment = cmd.align(
+            "interface2 and name CA+C+N+O", 
+            "interface1 and name CA+C+N+O"
+        )
+        results.interface_backbone_rmsd = interface_backbone_alignment[0]
+        results.interface_backbone_aligned_atoms = interface_backbone_alignment[1]
+    except:
+        print("Warning: Could not calculate interface backbone RMSD")
+        results.interface_backbone_rmsd = 0.0
+        results.interface_backbone_aligned_atoms = 0
+    
+    print(f"Interface RMSD calculation completed")
     
     # Clean up selections
     cmd.delete("interface1")
@@ -194,8 +241,12 @@ def write_summary_csv(results, output_file="pymol_analysis_summary.csv"):
         writer.writerow(['Metric', 'Value', 'Unit'])
         writer.writerow(['Total RMSD', f'{results.rmsd:.3f}', 'Å'])
         writer.writerow(['Backbone RMSD', f'{results.backbone_rmsd:.3f}', 'Å'])
+        writer.writerow(['Interface RMSD', f'{results.interface_rmsd:.3f}', 'Å'])
+        writer.writerow(['Interface Backbone RMSD', f'{results.interface_backbone_rmsd:.3f}', 'Å'])
         writer.writerow(['Aligned Atoms', results.aligned_atoms, 'atoms'])
         writer.writerow(['Backbone Aligned Atoms', results.backbone_aligned_atoms, 'atoms'])
+        writer.writerow(['Interface Aligned Atoms', results.interface_aligned_atoms, 'atoms'])
+        writer.writerow(['Interface Backbone Aligned Atoms', results.interface_backbone_aligned_atoms, 'atoms'])
         writer.writerow([])
         
         # Write SASA results
@@ -285,6 +336,9 @@ def main():
     print("Analyzing interface residues...")
     analyze_interface_residues(results)
     
+    print("Calculating interface RMSD...")
+    calculate_interface_rmsd(results)
+    
     # Save aligned structures
     print("Saving aligned structures...")
     save_aligned_structures()
@@ -306,6 +360,8 @@ def main():
     print(f"\n=== BRIEF SUMMARY ===")
     print(f"Total RMSD: {results.rmsd:.3f} Å")
     print(f"Backbone RMSD: {results.backbone_rmsd:.3f} Å")
+    print(f"Interface RMSD: {results.interface_rmsd:.3f} Å")
+    print(f"Interface Backbone RMSD: {results.interface_backbone_rmsd:.3f} Å")
     print(f"Structure 1 SASA: {results.sasa1:.2f} Ų")
     print(f"Structure 2 SASA: {results.sasa2:.2f} Ų")
     print(f"Interacting residue pairs (≤4.0Å): {len(results.interacting_pairs)}")
